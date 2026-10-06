@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "1.9";
+  const APP_VERSION = "2.0";
   const APP_ID = "gcyv-panel";
   const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   const TARGET_UNIT = /genel\s*cerrahi/i;
@@ -171,12 +171,14 @@
 
   function patientName(raw = {}) {
     const direct = deepGet(raw, [
-      "hasta.adSoyad", "hastaAdiSoyadi", "hastaAdSoyad", "adSoyad", "hastaAdi", "adSoyadi",
+      "hasta.kimlik.adiSoyadi", "hastaGelis.hasta.kimlik.adiSoyadi",
+      "birimSevk.hastaGelis.hasta.kimlik.adiSoyadi", "hastaBirimSevk.hastaGelis.hasta.kimlik.adiSoyadi",
+      "hasta.adSoyad", "hastaAdiSoyadi", "hastaAdSoyad", "adSoyad", "adSoyadi",
       "hasta.adiSoyadi", "patientName"
     ]);
     if (direct) return direct;
-    const name = deepGet(raw, ["hasta.ad", "ad", "hastaAdi"]);
-    const surname = deepGet(raw, ["hasta.soyad", "soyad", "hastaSoyadi"]);
+    const name = deepGet(raw, ["hasta.kimlik.adi", "hastaGelis.hasta.kimlik.adi", "birimSevk.hastaGelis.hasta.kimlik.adi", "hasta.ad", "ad", "hastaAdi"]);
+    const surname = deepGet(raw, ["hasta.kimlik.soyadi", "hastaGelis.hasta.kimlik.soyadi", "birimSevk.hastaGelis.hasta.kimlik.soyadi", "hasta.soyad", "soyad", "hastaSoyadi"]);
     return clean([name, surname].filter(Boolean).join(" "));
   }
 
@@ -223,7 +225,9 @@
   }
 
   function recordKey(record) {
-    return clean(record.consultId) || [norm(record.name), clean(record.date), norm(record.answer).slice(0, 80)].join("|");
+    if (clean(record.hastaId)) return `hasta:${clean(record.hastaId)}`;
+    if (clean(record.hastaGelisId)) return `gelis:${clean(record.hastaGelisId)}`;
+    return `kons:${clean(record.consultId) || [norm(record.name), clean(record.date), norm(record.answer).slice(0, 80)].join("|")}`;
   }
 
   function normalizeConsult(raw, source = "API", trustedPolyclinicTarget = false) {
@@ -263,7 +267,7 @@
       hastaGelisId:inferred.hastaGelisId || flatValue(raw, ["hastaGelisId", "gelisId", "idHastaGelis"]),
       birimSevkId:inferred.birimSevkId || flatValue(raw, ["birimSevkId", "hastaBirimSevkId", "idBirimSevk"]) || recordId,
       hastaId:inferred.hastaId || flatValue(raw, ["hastaId", "idHasta"]),
-      name:flatValue(raw, ["adiSoyadi", "adSoyad", "hastaAdiSoyadi", "hastaAdSoyad", "hastaAdi"]),
+      name:patientName(raw) || flatValue(raw, ["hastaAdiSoyadi", "hastaAdSoyad", "adSoyad"]),
       protocol:flatValue(raw, ["protokolNo", "protokol", "takipNo", "dosyaNo"]),
       ageSex:flatValue(raw, ["yasCinsiyet", "yasCins", "yas"]),
       date:flatValue(raw, ["kabulTarihi", "gelisTarihi", "tarih", "saat"]),
@@ -276,14 +280,22 @@
 
   function mergeRecord(record) {
     if (!record?.key) return false;
+    const existingKey = [...state.records.entries()].find(([, item]) =>
+      (clean(record.hastaId) && clean(item.hastaId) === clean(record.hastaId)) ||
+      (clean(record.hastaGelisId) && clean(item.hastaGelisId) === clean(record.hastaGelisId))
+    )?.[0];
+    if (existingKey) record.key = existingKey;
     const previous = state.records.get(record.key);
+    const latest = previous && dateSortKey(previous.date) > dateSortKey(record.date) ? previous : record;
     state.records.set(record.key, previous ? {
-      ...previous,
-      ...record,
-      selected: previous.selected,
-      name: record.name === "Hasta adı alınamadı" ? previous.name : record.name,
-      source: [...new Set([previous.source, record.source].filter(Boolean))].join(" + "),
-      requestingUnit: [...new Set([previous.requestingUnit, record.requestingUnit].filter(Boolean))].join(" / ")
+      ...previous, ...record, ...latest,
+      selected:previous.selected,
+      name:record.name !== "Hasta adı alınamadı" ? record.name : previous.name,
+      hastaId:record.hastaId || previous.hastaId,
+      hastaGelisId:latest.hastaGelisId || record.hastaGelisId || previous.hastaGelisId,
+      birimSevkId:latest.birimSevkId || record.birimSevkId || previous.birimSevkId,
+      source:"FONET konsültasyon cevabı",
+      requestingUnit:[...new Set([previous.requestingUnit, record.requestingUnit].filter(Boolean))].join(" / ")
     } : record);
     scheduleRender();
     return !previous;
@@ -473,13 +485,17 @@
   }
 
   async function scanCandidate(candidate) {
-    if (!candidate.hastaGelisId && candidate.birimSevkId) {
-      const sevkPayload = await apiJson(`/Tibbi/HastaBirimSevk/getSevkUyariInfo/${encodeURIComponent(candidate.birimSevkId)}`);
-      const root = sevkPayload?.data || sevkPayload || {};
-      const sevk = root.hastaBirimSevk || root.birimSevk || {};
-      const gelis = sevk.hastaGelis || root.hastaGelis || {};
-      candidate.hastaGelisId = clean(gelis.id || inferPatientIds(root).hastaGelisId);
-      candidate.hastaId = candidate.hastaId || clean(gelis.hasta?.id || inferPatientIds(root).hastaId);
+    if (candidate.birimSevkId && (!candidate.hastaGelisId || !candidate.hastaId || !candidate.name)) {
+      try {
+        const sevkPayload = await apiJson(`/Tibbi/HastaBirimSevk/getSevkUyariInfo/${encodeURIComponent(candidate.birimSevkId)}`);
+        const root = sevkPayload?.data || sevkPayload || {};
+        const sevk = root.hastaBirimSevk || root.birimSevk || {};
+        const gelis = sevk.hastaGelis || root.hastaGelis || {};
+        candidate.hastaGelisId = candidate.hastaGelisId || clean(gelis.id || inferPatientIds(root).hastaGelisId);
+        candidate.hastaId = candidate.hastaId || clean(gelis.hasta?.id || inferPatientIds(root).hastaId);
+        candidate.name = candidate.name || patientName(root) || patientName(sevk) || patientName(gelis);
+        candidate.protocol = candidate.protocol || protocol(root);
+      } catch (error) { if (!candidate.hastaGelisId) throw error; }
     }
     if (!candidate.hastaGelisId) throw new Error("Hasta geliş kimliği çözümlenemedi");
     let pending = state.consultCache.get(candidate.hastaGelisId);
@@ -623,13 +639,13 @@
     const root = raw?.data || raw || {};
     const clinic = root.klinik || root.hastaKlinik || {};
     const sevk = root.birimSevk || root.hastaBirimSevk || {};
-    const date = clean(clinic.yatisTarihi || clinic.yatışTarihi || sevk.yatisTarihi || sevk.yatışTarihi || "");
     const bed = clinic.yatak || sevk.klinik?.yatak || {};
     const room = clean(bed.oda?.odaNo || clinic.odaNo || "");
     const bedNo = clean(bed.yatakNo || bed.no || "");
+    const inpatientEvidence = Boolean(clinic.id || room || bedNo || clinic.yatisTarihi || clinic.yatışTarihi);
+    const date = clean(clinic.yatisTarihi || clinic.yatışTarihi || sevk.yatisTarihi || sevk.yatışTarihi || (inpatientEvidence ? sevk.sevkTarihi : "") || "");
     const unit = clean(sevk.birim?.adi || clinic.birim?.adi || bed.oda?.birim?.adi || fallbackUnit);
-    if (!afterConsult(date, consultDate) || !unit) return null;
-    if (!room && !bedNo && !date) return null;
+    if (!inpatientEvidence || !afterConsult(date, consultDate) || !unit) return null;
     const place = [unit, room, bedNo].filter(Boolean).join(" ");
     return { type:/yo[ğg]un\s+bak[ıi]m/i.test(unit) ? "icu" : "ward", date, note:`${place} YATTI` };
   }
@@ -645,14 +661,33 @@
 
   async function fetchPatientMovements(record) {
     record.movements = [];
-    if (!record.hastaGelisId || !dateSortKey(record.date)) return;
-    const payload = await apiJson("/Tibbi/HastaBirimSevk/getKayitList", {
-      filterMap:"",
-      filter:JSON.stringify([{ index:1, property:"hastaGelis.id", value:Number(record.hastaGelisId), filterType:"kriterPanel", type:"Long", operator:"=" }]),
-      page:1, start:0, limit:100,
-      sort:JSON.stringify([{ property:"sevkTarihi", direction:"DESC" }])
-    });
-    const candidates = (payload.data || []).filter((row) => clean(row.id || row.birimSevkId)).slice(0, 20);
+    if ((!record.hastaGelisId && !record.hastaId) || !dateSortKey(record.date)) return;
+    const queries = [
+      record.hastaGelisId ? { property:"hastaGelis.id", value:record.hastaGelisId } : null,
+      record.hastaId ? { property:"hastaGelis.hasta.id", value:record.hastaId } : null
+    ].filter(Boolean);
+    const responses = await Promise.all(queries.map(async (query) => {
+      try {
+        const payload = await apiJson("/Tibbi/HastaBirimSevk/getKayitList", {
+          filterMap:"",
+          filter:JSON.stringify([{ index:1, property:query.property, value:Number(query.value), filterType:"kriterPanel", type:"Long", operator:"=" }]),
+          page:1, start:0, limit:100,
+          sort:JSON.stringify([{ property:"sevkTarihi", direction:"DESC" }])
+        });
+        return payload.data || [];
+      } catch (error) { return null; }
+    }));
+    if (responses.every((rows) => rows === null)) throw new Error("Sevk geçmişi okunamadı");
+    const seenIds = new Set();
+    const consultDay = dateSortKey(record.date).slice(0, 8);
+    const candidates = responses.flatMap((rows) => rows || []).filter((row) => {
+      const id = clean(row.id || row.birimSevkId);
+      if (!id || seenIds.has(id)) return false;
+      const rowDay = dateSortKey(row.sevkTarihi || row.yatisTarihi || row.klinik?.yatisTarihi).slice(0, 8);
+      if (rowDay && rowDay < consultDay && id !== clean(record.birimSevkId)) return false;
+      seenIds.add(id);
+      return true;
+    }).slice(0, 15);
     if (record.birimSevkId && !candidates.some((row) => clean(row.id || row.birimSevkId) === clean(record.birimSevkId))) {
       candidates.push({ id:record.birimSevkId, birimAdi:record.unit });
     }
@@ -667,6 +702,13 @@
         const movement = movementFromClinical(detail, record.date, unit);
         if (movement) found.push(movement);
       } catch (error) { /* Poliklinik sevklerinde klinik kaydı bulunmayabilir. */ }
+      if (!found.some((item) => item.type === "ward" || item.type === "icu")) {
+        try {
+          const sevk = await apiJson(`/Tibbi/HastaBirimSevk/getSevkUyariInfo/${encodeURIComponent(id)}`);
+          const movement = movementFromClinical(sevk, record.date, unit);
+          if (movement) found.push(movement);
+        } catch (error) { /* Yatış için klinik ve sevk kayıtları ayrı denenir. */ }
+      }
       try {
         const surgeries = await apiJson(`/Klinik/Klinik/ameliyatIstekKlinikList/${encodeURIComponent(id)}`);
         found.push(...movementsFromSurgery(surgeries.data || [], record.date));
@@ -1164,7 +1206,6 @@
     render();
   }
 
-  installNetworkCapture();
   installPanel();
   state.observer = new MutationObserver(() => {
     if (state.active && !document.getElementById(APP_ID)) installPanel();

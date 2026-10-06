@@ -1,6 +1,6 @@
 # Genel Cerrahi Yatış Vizit
 
-Güncel sürüm: **V1.9**
+Güncel sürüm: **V2.0**
 
 FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsültasyon` listesine düşen hastaları tarayan, konsültasyon cevap metninde yatış kararı bulunanları ayıran ve seçilen hastalar için bağımsız Word vizit kağıdı oluşturan tarayıcı aracıdır.
 
@@ -16,6 +16,8 @@ FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsült
 - Bulunan kayıtları seçilebilir listede gösterir.
 - Genel Cerrahi konsültasyon cevabında açık bir olumlu yatış kararı yoksa hastayı listeye almaz.
 - Poliklinik listesi zaten Genel Cerrahi hedefini belirlediği için ayrıntı yanıtında birim adı boş olsa bile satırı dışlamaz; varsa sevk kimliğiyle kesin eşleştirir.
+- Hasta adını konsültasyon yanıtında bulamazsa sevk kaydındaki hasta kimliğinden tamamlar; otomatik ağ yanıtlarını ayrıca hasta satırı olarak eklemez.
+- Aynı hasta için birden fazla olumlu konsültasyon varsa listede ve Word'de tek hasta gösterir; en güncel konsültasyon yanıtını kullanır.
 - Poliklinik satırındaki kayıt kimliğini `birimSevkId` olarak değerlendirir ve FONET sevk servisi üzerinden gerçek `hastaGelisId` değerini çözümledikten sonra konsültasyonları tarar.
 - Seçilen hastalardan iki sütunlu DOCX vizit kağıdı ve CSV oluşturur.
 - Word çıktısı için yatış tanısını konsültasyon cevabından, gerekirse FONET tanı kaydından alır.
@@ -24,7 +26,7 @@ FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsült
 - Güncel görüntülemeleri ve varsa raporlarını ekler.
 - Görüntüleme raporunda `Bulgular:` bölümündeki kalın yazılmış hasta bulgularını gösterir; teknik/kimlik üst bilgisini ve `Sonuç:` başlığından sonrasını dışarıda bırakır. Bulgular bölümünde kalın biçimlendirme yoksa bölüm metnini gösterir.
 - Aynı hastane gelişindeki sevklerde bugüne ait orderları tarayıp ekler.
-- Konsültasyondan sonra FONET'te kayıtlı servis/yoğun bakım yatışını ve ameliyat başlangıcını arar; doğrulanan hareketleri birim, oda/yatak ve tarih bilgisiyle kalın not olarak Word'e ekler. Yalnız yatış kararı veya ameliyat istemi gerçekleşmiş yatış/ameliyat sayılmaz.
+- Konsültasyondan sonra FONET'te kayıtlı servis/yoğun bakım yatışını ve ameliyat başlangıcını aynı hasta gelişinde ve aynı hastanın sonraki gelişlerinde arar; doğrulanan hareketleri birim, oda/yatak ve tarih bilgisiyle kalın not olarak Word'e ekler. Yalnız yatış kararı veya ameliyat istemi gerçekleşmiş yatış/ameliyat sayılmaz.
 - Word çıktısında klinik metinleri koruyarak boş satırları ve paragraf aralıklarını azaltır.
 - Bir bölümün servisine erişilemezse çıktıda "alınamadı", veri yoksa "bulunamadı" yazar.
 - Hasta verisini harici bir sunucuya göndermez; yalnızca açık FONET oturumundaki istekleri kullanır.
