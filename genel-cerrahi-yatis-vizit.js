@@ -512,7 +512,8 @@
       setMessage(`${candidates.length} Poliklinik konsültasyonu bulundu; cevaplar taranıyor…`);
       const queue = [...candidates];
       await Promise.all(Array.from({ length:Math.min(4, queue.length) }, () => scanWorker(queue)));
-      setMessage(`Tarama tamamlandı: ${state.total} konsültasyondan ${state.records.size} yatış kararlı Genel Cerrahi kaydı bulundu.`);
+      const errorNote = state.errors.length ? ` Hata: ${state.errors.length}. İlk hata: ${state.errors[0]}` : "";
+      setMessage(`Tarama tamamlandı: ${state.total} konsültasyondan ${state.records.size} yatış kararlı Genel Cerrahi kaydı bulundu.${errorNote}`);
     } catch (error) {
       state.errors.push(clean(error?.message || error));
       setMessage(clean(error?.message || error));
