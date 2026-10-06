@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "1.6";
+  const APP_VERSION = "1.7";
   const APP_ID = "gcyv-panel";
   const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   const TARGET_UNIT = /genel\s*cerrahi/i;
@@ -636,7 +636,54 @@
 
   function radiologyText(payload) {
     const root = payload?.data || payload || {};
-    return text(root.raporTextByRapor || root.raporText || root.raporMetni || root.raporHtml || root.rapor || root.bulgu || root.bulgular || root.sonuc || root.sonucAciklama || root.aciklama || "");
+    return String(root.raporTextByRapor || root.raporText || root.raporMetni || root.raporHtml || root.rapor || root.bulgu || root.bulgular || root.sonuc || root.sonucAciklama || root.aciklama || "");
+  }
+
+  function decodeReportText(value) {
+    return String(value || "").replace(/&nbsp;|&#160;/gi, " ").replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"')
+      .replace(/&#x([\da-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+      .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)));
+  }
+
+  function boldReportBeforeResult(raw) {
+    let source = String(raw || "");
+    if (!/<\s*[a-z]/i.test(source) && /&lt;\s*(?:b|strong|span|p)\b/i.test(source)) source = decodeReportText(source);
+    if (!source) return "";
+    const stack = [];
+    const segments = [];
+    const voidTags = /^(?:br|hr|img|input|meta|link|wbr)$/;
+    for (const token of source.split(/(<[^>]*>)/g)) {
+      if (!token) continue;
+      if (token[0] !== "<") {
+        segments.push({ value:decodeReportText(token), bold:stack.some((item) => item.bold) });
+        continue;
+      }
+      const match = token.match(/^<\s*(\/?)\s*([a-z][\w:-]*)/i);
+      if (!match) continue;
+      const tag = match[2].toLowerCase();
+      if (match[1]) {
+        while (stack.length) { if (stack.pop().tag === tag) break; }
+      } else if (!voidTags.test(tag) && !/\/\s*>$/.test(token)) {
+        stack.push({ tag, bold:tag === "b" || tag === "strong" || /font-weight\s*:\s*(?:bold|[6-9]00)/i.test(token) || /class\s*=\s*["'][^"']*\bbold\b/i.test(token) });
+      }
+    }
+    const plain = segments.map((item) => item.value).join("");
+    const resultAt = plain.search(/sonu[çc]\s*:/i);
+    const limit = resultAt < 0 ? plain.length : resultAt;
+    const pieces = [];
+    let offset = 0;
+    for (const item of segments) {
+      if (offset >= limit) break;
+      const portion = item.value.slice(0, Math.max(0, limit - offset));
+      if (item.bold && portion.trim()) pieces.push(portion);
+      offset += item.value.length;
+    }
+    if (!pieces.length && !/<[^>]+>/.test(source)) {
+      const markdown = source.slice(0, resultAt < 0 ? undefined : resultAt).match(/\*\*([^*]+)\*\*/g) || [];
+      return markdown.map((item) => clean(item.slice(2, -2))).filter(Boolean).join("\n");
+    }
+    return pieces.map((item) => clean(item)).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
   }
 
   async function fetchImaging(record) {
@@ -651,14 +698,14 @@
     const rows = (payload.data || []).slice(0, 8);
     record.imaging = await Promise.all(rows.map(async (row) => {
       const reportId = clean(row.raporId || "");
-      let report = text(row.raporTextByRapor || row.raporText || row.rapor || row.bulgular || row.sonuc || "");
+      let report = String(row.raporTextByRapor || row.raporText || row.rapor || row.bulgular || row.sonuc || "");
       if (!report && reportId) {
         try { report = radiologyText(await apiJson(`/Ris/RisHizmetSonuc/getRisRaporSonucByRaporId/${encodeURIComponent(reportId)}`)); } catch (error) {}
       }
       return {
         date:clean(row.istemTarihi || row.risKabulTarihi || ""),
         exam:clean(row.tetkikAdi || row.hizmetAdi || row.hizmet?.adi || row.risOrder?.hizmet?.adi || row.risOrderKodAdi || row.istemAdi || "Görüntüleme"),
-        report:clip(report, 1200)
+        report:boldReportBeforeResult(report)
       };
     }));
   }
@@ -790,18 +837,19 @@
   function wordParagraph(text, options = {}) {
     const size = Math.round(Number(options.size || 9) * 2);
     const color = clean(options.color || "000000").replace(/[^0-9A-F]/gi, "") || "000000";
-    const runs = String(text == null ? "" : text).split(/\n/).map((line, index) =>
+    const lines = String(text == null ? "" : text).replace(/\r/g, "").split(/\n/).map((line) => line.trim()).filter(Boolean);
+    const runs = (lines.length ? lines : [""]).map((line, index) =>
       (index ? "<w:r><w:br/></w:r>" : "") +
       `<w:r><w:rPr><w:rFonts w:ascii="Tahoma" w:hAnsi="Tahoma"/><w:sz w:val="${size}"/><w:szCs w:val="${size}"/>${options.bold ? "<w:b/>" : ""}<w:color w:val="${color}"/></w:rPr><w:t xml:space="preserve">${xmlEsc(line)}</w:t></w:r>`
     ).join("");
-    return `<w:p><w:pPr>${options.keep ? "<w:keepNext/>" : ""}${options.align ? `<w:jc w:val="${options.align}"/>` : ""}<w:spacing w:before="${options.before || 0}" w:after="${options.after || 0}" w:line="190" w:lineRule="auto"/></w:pPr>${runs}</w:p>`;
+    return `<w:p><w:pPr>${options.keep ? "<w:keepNext/>" : ""}${options.align ? `<w:jc w:val="${options.align}"/>` : ""}<w:spacing w:before="${options.before || 0}" w:after="${options.after || 0}" w:line="185" w:lineRule="auto"/></w:pPr>${runs}</w:p>`;
   }
 
   function wordTableCell(value, options = {}) {
     const width = Number(options.width || 1000);
     const shade = options.shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${options.shade}"/>` : "";
     const bold = options.bold ? "<w:b/>" : "";
-    return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shade}<w:tcMar><w:top w:w="18" w:type="dxa"/><w:left w:w="35" w:type="dxa"/><w:bottom w:w="18" w:type="dxa"/><w:right w:w="35" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Tahoma" w:hAnsi="Tahoma"/>${bold}<w:sz w:val="15"/><w:szCs w:val="15"/></w:rPr><w:t xml:space="preserve">${xmlEsc(value || "—")}</w:t></w:r></w:p></w:tc>`;
+    return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shade}<w:tcMar><w:top w:w="10" w:type="dxa"/><w:left w:w="30" w:type="dxa"/><w:bottom w:w="10" w:type="dxa"/><w:right w:w="30" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Tahoma" w:hAnsi="Tahoma"/>${bold}<w:sz w:val="15"/><w:szCs w:val="15"/></w:rPr><w:t xml:space="preserve">${xmlEsc(value || "—")}</w:t></w:r></w:p></w:tc>`;
   }
 
   function wordLabTable(record) {
@@ -818,32 +866,32 @@
   function wordPatient(record) {
     const title = [record.name, record.ageSex, record.protocol ? "Prot: " + record.protocol : ""].filter(Boolean).join(" · ");
     return [
-      wordParagraph(title, { size:15, bold:true, keep:true, after:30 }),
-      wordParagraph("YATIŞ KARARI: " + (record.signal || "Yatış kararı"), { size:11, bold:true, color:"B91C1C" }),
-      wordParagraph("TANI: " + (record.diagnosis || (record.detailErrors?.includes("Tanı") ? "Tanı kaydı alınamadı" : "Tanı kaydı bulunamadı")), { size:11, bold:true }),
+      wordParagraph(title, { size:12, bold:true, keep:true, after:15 }),
+      wordParagraph("YATIŞ KARARI: " + (record.signal || "Yatış kararı"), { size:10, bold:true, color:"B91C1C" }),
+      wordParagraph("TANI: " + (record.diagnosis || (record.detailErrors?.includes("Tanı") ? "Tanı kaydı alınamadı" : "Tanı kaydı bulunamadı")), { size:10, bold:true }),
       wordParagraph("Konsültasyon Tarihi: " + (record.date || "—"), { size:9 }),
       wordParagraph("İsteyen Birim: " + (record.requestingUnit || "—"), { size:9 }),
       wordParagraph("Konsültasyon Birimi: " + (record.unit || "Genel Cerrahi"), { size:9 }),
-      wordParagraph("KONS İSTEMİ", { size:9, bold:true, keep:true, before:80 }),
+      wordParagraph("KONS İSTEMİ", { size:9, bold:true, keep:true, before:40 }),
       wordParagraph(record.request || "—", { size:9 }),
-      wordParagraph("GENEL CERRAHİ CEVABI", { size:9, bold:true, keep:true, before:80 }),
+      wordParagraph("GENEL CERRAHİ CEVABI", { size:9, bold:true, keep:true, before:40 }),
       wordParagraph(record.answer || "—", { size:9 }),
-      wordParagraph("SON GÜNCEL KANLAR" + (record.labDate ? " · " + record.labDate : ""), { size:9, bold:true, keep:true, before:90 }),
+      wordParagraph("SON GÜNCEL KANLAR" + (record.labDate ? " · " + record.labDate : ""), { size:9, bold:true, keep:true, before:45 }),
       wordLabTable(record),
-      wordParagraph("GÖRÜNTÜLEMELER", { size:9, bold:true, keep:true, before:90 }),
-      ...((record.imaging || []).length ? record.imaging.map((item) => wordParagraph(`${item.date || ""} ${item.exam || "Görüntüleme"}${item.report ? "\n" + item.report : "\nRapor bulunamadı."}`, { size:8 })) : [wordParagraph(record.detailErrors?.includes("Görüntüleme") ? "Görüntüleme bilgileri alınamadı." : "Görüntüleme bulunamadı.", { size:8 })]),
-      wordParagraph("ORDER", { size:9, bold:true, keep:true, before:90 }),
+      wordParagraph("GÖRÜNTÜLEMELER", { size:9, bold:true, keep:true, before:45 }),
+      ...((record.imaging || []).length ? record.imaging.map((item) => wordParagraph(`${item.date || ""} ${item.exam || "Görüntüleme"}${item.report ? "\n" + item.report : ""}`, { size:8 })) : [wordParagraph(record.detailErrors?.includes("Görüntüleme") ? "Görüntüleme bilgileri alınamadı." : "Görüntüleme bulunamadı.", { size:8 })]),
+      wordParagraph("ORDER", { size:9, bold:true, keep:true, before:45 }),
       ...((record.orders || []).length ? record.orders.map((item, index) => wordParagraph(`${index + 1}. ${item.name}${item.dose ? " · " + item.dose : ""}${item.usage ? " · " + item.usage : ""}${item.start ? " · " + item.start : ""}${item.status ? " · " + item.status : ""}`, { size:8 })) : [wordParagraph(record.detailErrors?.includes("Order") ? "Order bilgileri alınamadı." : "Bugüne ait order bulunamadı.", { size:8 })]),
-      wordParagraph("BH: ______________________________________________", { size:9, before:90 }),
+      wordParagraph("BH: ______________________________________________", { size:9, before:45 }),
       wordParagraph("Kİ: _______________________________________________", { size:9 }),
       wordParagraph("GO: ______________________________________________", { size:9 }),
       wordParagraph("PLAN: ____________________________________________", { size:9 }),
-      wordParagraph("------------------------------------------------------------", { size:9, color:"64748B", before:90, after:120 })
+      wordParagraph("------------------------------------------------------------", { size:9, color:"64748B", before:45, after:60 })
     ].join("");
   }
 
   function docxBytes(records) {
-    const body = wordParagraph("GENEL CERRAHİ YATIŞ VİZİT", { size:17, bold:true, after:140 }) + records.map(wordPatient).join("");
+    const body = wordParagraph("GENEL CERRAHİ YATIŞ VİZİT", { size:14, bold:true, after:70 }) + records.map(wordPatient).join("");
     const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="${WORD_NS}"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="900" w:right="900" w:bottom="900" w:left="900"/><w:cols w:num="2" w:space="500" w:sep="1"/></w:sectPr></w:body></w:document>`;
     return zip({
       "[Content_Types].xml":"<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>",
