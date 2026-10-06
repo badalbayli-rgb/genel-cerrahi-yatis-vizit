@@ -607,10 +607,10 @@
     if (!value) return;
     const kabul = await apiJson("/Lis/LisRaporSonuc/getLisRaporHastaInfoList", {
       filter:JSON.stringify([{ property, value:Number(value), type:"Long", operator:"=" }]),
-      page:1, start:0, limit:8,
+      page:1, start:0, limit:12,
       sort:JSON.stringify([{ property:"lisKabulTarihi", direction:"DESC" }])
     });
-    const accepts = (kabul.data || []).slice(0, 6);
+    const accepts = (kabul.data || []).slice(0, 12);
     record.labDate = clean(accepts[0]?.lisKabulTarihi || "");
     const tubePayloads = await Promise.all(accepts.map((item) => apiJson("/Lis/LisRaporSonuc/getLisHastaTupInfo", {
       filter:JSON.stringify([{ filterType:"kriterPanel", property:"t.lisKabul.id", value:Number(item.lisKabulId), type:"Long", operator:"=" }]),
@@ -618,13 +618,18 @@
     }).catch(() => ({ data:[] }))));
     const barcodes = [...new Set(tubePayloads.flatMap((payload) => (payload.data || []).map((row) => clean(row.barkodNo)).filter(Boolean)))];
     if (!barcodes.length) { record.labs = []; return; }
-    const detail = await apiJson("/Lis/LisRaporSonuc/getLisRaporDetay", {
-      filter:JSON.stringify([{ filterType:"kriterPanel", property:"t.lisHastaTup.barkodNo", value:barcodes, type:"Long", operator:"IN" }]),
-      page:1, start:0, limit:1500,
-      group:JSON.stringify([{ property:"tupAdi", direction:"ASC" }]),
-      sort:JSON.stringify([{ property:"lt.siraNo", direction:"ASC" }])
-    });
-    record.labs = normalizeLabRows(labRowsFromPayload(detail.data || []));
+    const detailRows = [];
+    for (let offset = 0; offset < barcodes.length; offset += 18) {
+      const batch = barcodes.slice(offset, offset + 18);
+      const detail = await apiJson("/Lis/LisRaporSonuc/getLisRaporDetay", {
+        filter:JSON.stringify([{ filterType:"kriterPanel", property:"t.lisHastaTup.barkodNo", value:batch, type:"Long", operator:"IN" }]),
+        page:1, start:0, limit:1500,
+        group:JSON.stringify([{ property:"tupAdi", direction:"ASC" }]),
+        sort:JSON.stringify([{ property:"lt.siraNo", direction:"ASC" }])
+      });
+      detailRows.push(...labRowsFromPayload(detail.data || []));
+    }
+    record.labs = normalizeLabRows(detailRows);
     const newest = record.labs.map((item) => item.date).filter(Boolean).sort((a, b) => dateSortKey(b).localeCompare(dateSortKey(a)))[0];
     if (newest) record.labDate = newest;
   }
