@@ -1,6 +1,6 @@
 # Genel Cerrahi Yatış Vizit
 
-Güncel sürüm: **V1.8**
+Güncel sürüm: **V1.9**
 
 FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsültasyon` listesine düşen hastaları tarayan, konsültasyon cevap metninde yatış kararı bulunanları ayıran ve seçilen hastalar için bağımsız Word vizit kağıdı oluşturan tarayıcı aracıdır.
 
@@ -19,10 +19,12 @@ FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsült
 - Poliklinik satırındaki kayıt kimliğini `birimSevkId` olarak değerlendirir ve FONET sevk servisi üzerinden gerçek `hastaGelisId` değerini çözümledikten sonra konsültasyonları tarar.
 - Seçilen hastalardan iki sütunlu DOCX vizit kağıdı ve CSV oluşturur.
 - Word çıktısı için yatış tanısını konsültasyon cevabından, gerekirse FONET tanı kaydından alır.
-- Son laboratuvar kabullerinden güncel kan ve koagülasyon sonuçlarını, diğer kan tetkikleri dahil, Word'de gruplu tabloya koyar. TİT sonuçlarını göstermez.
+- Yalnız istenen kan parametrelerinin en güncel sonucunu (WBC, Hb, PLT, kreatinin, albümin, AST/ALT, ALP/GGT, total/direkt bilirubin, CRP, prokalsitonin, glukoz, Na/K/P/Ca/dCa/Mg, amilaz/lipaz) kompakt Word tablosunda gösterir. Koagülasyon, TİT ve diğer tetkikleri göstermez; eksik sonuçları `X` ile belirtir.
+- Aynı tabloda son ölçümün tarihini, tansiyonunu, nabzını ve ateşini gösterir.
 - Güncel görüntülemeleri ve varsa raporlarını ekler.
 - Görüntüleme raporunda `Bulgular:` bölümündeki kalın yazılmış hasta bulgularını gösterir; teknik/kimlik üst bilgisini ve `Sonuç:` başlığından sonrasını dışarıda bırakır. Bulgular bölümünde kalın biçimlendirme yoksa bölüm metnini gösterir.
 - Aynı hastane gelişindeki sevklerde bugüne ait orderları tarayıp ekler.
+- Konsültasyondan sonra FONET'te kayıtlı servis/yoğun bakım yatışını ve ameliyat başlangıcını arar; doğrulanan hareketleri birim, oda/yatak ve tarih bilgisiyle kalın not olarak Word'e ekler. Yalnız yatış kararı veya ameliyat istemi gerçekleşmiş yatış/ameliyat sayılmaz.
 - Word çıktısında klinik metinleri koruyarak boş satırları ve paragraf aralıklarını azaltır.
 - Bir bölümün servisine erişilemezse çıktıda "alınamadı", veri yoksa "bulunamadı" yazar.
 - Hasta verisini harici bir sunucuya göndermez; yalnızca açık FONET oturumundaki istekleri kullanır.
