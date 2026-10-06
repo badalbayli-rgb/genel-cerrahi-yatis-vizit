@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "1.1";
+  const APP_VERSION = "1.2";
   const APP_ID = "gcyv-panel";
   const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   const TARGET_UNIT = /genel\s*cerrahi/i;
@@ -28,6 +28,7 @@
   const state = {
     records: new Map(),
     candidates: new Map(),
+    consultCache: new Map(),
     captured: 0,
     scannedRows: 0,
     errors: [],
@@ -245,7 +246,8 @@
       ...record,
       selected: previous.selected,
       name: record.name === "Hasta adı alınamadı" ? previous.name : record.name,
-      source: [...new Set([previous.source, record.source].filter(Boolean))].join(" + ")
+      source: [...new Set([previous.source, record.source].filter(Boolean))].join(" + "),
+      requestingUnit: [...new Set([previous.requestingUnit, record.requestingUnit].filter(Boolean))].join(" / ")
     } : record);
     scheduleRender();
     return !previous;
@@ -398,13 +400,12 @@
       list = domCandidates();
       if (!list.length) throw error;
     }
-    const unique = new Map();
-    list.filter((item) => item.hastaGelisId).forEach((item) => unique.set(item.hastaGelisId, item));
-    state.candidates = unique;
-    state.total = unique.size;
-    state.scannedRows = unique.size;
-    if (!unique.size) throw new Error("Listede okunabilir hasta kaydı bulunamadı.");
-    return [...unique.values()];
+    const readable = list.filter((item) => item.hastaGelisId);
+    state.candidates = new Map(readable.map((item, index) => [`${item.hastaGelisId}|${index}`, item]));
+    state.total = readable.length;
+    state.scannedRows = list.length;
+    if (!readable.length) throw new Error("Listede okunabilir hasta kaydı bulunamadı.");
+    return readable;
   }
 
   function positiveConsults(payload, candidate) {
@@ -428,7 +429,12 @@
   }
 
   async function scanCandidate(candidate) {
-    const payload = await apiJson(`/Poliklinik/Poliklinik/getHastaGelisKonsultasyonList/${encodeURIComponent(candidate.hastaGelisId)}/1`);
+    let pending = state.consultCache.get(candidate.hastaGelisId);
+    if (!pending) {
+      pending = apiJson(`/Poliklinik/Poliklinik/getHastaGelisKonsultasyonList/${encodeURIComponent(candidate.hastaGelisId)}/1`);
+      state.consultCache.set(candidate.hastaGelisId, pending);
+    }
+    const payload = await pending;
     positiveConsults(payload, candidate).forEach(mergeRecord);
   }
 
@@ -449,6 +455,7 @@
     state.busy = true;
     state.done = 0;
     state.records.clear();
+    state.consultCache.clear();
     state.errors = [];
     render();
     try {
