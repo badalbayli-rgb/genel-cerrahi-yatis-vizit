@@ -1,6 +1,6 @@
 # Genel Cerrahi Yatış Vizit
 
-Güncel sürüm: **V1.2**
+Güncel sürüm: **V1.3**
 
 FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsültasyon` listesine düşen hastaları tarayan, konsültasyon cevap metninde yatış kararı bulunanları ayıran ve seçilen hastalar için bağımsız Word vizit kağıdı oluşturan tarayıcı aracıdır.
 
@@ -15,6 +15,7 @@ FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsült
 - `yatış endikasyonu yok`, `yatışına gerek yok`, `yatış uygun değildir` ve taburculuk kararlarını dışlar.
 - Bulunan kayıtları seçilebilir listede gösterir.
 - Genel Cerrahi konsültasyon cevabında açık bir olumlu yatış kararı yoksa hastayı listeye almaz.
+- Poliklinik listesi zaten Genel Cerrahi hedefini belirlediği için ayrıntı yanıtında birim adı boş olsa bile satırı dışlamaz; varsa sevk kimliğiyle kesin eşleştirir.
 - Seçilen hastalardan iki sütunlu DOCX vizit kağıdı ve CSV oluşturur.
 - Hasta verisini harici bir sunucuya göndermez; yalnızca açık FONET oturumundaki istekleri kullanır.
 

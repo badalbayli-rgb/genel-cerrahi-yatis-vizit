@@ -1,23 +1,27 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "1.2";
+  const APP_VERSION = "1.3";
   const APP_ID = "gcyv-panel";
   const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   const TARGET_UNIT = /genel\s*cerrahi/i;
   const ADMISSION_POSITIVE = [
     /yat[ıi]ş[ıi]?\s+(?:uygundur|verildi|planland[ıi]|önerildi)/i,
+    /yat[ıi]ş[ıi]?\s+(?:yap[ıi]ld[ıi]|sağland[ıi]|sagland[ıi]|düşünüldü|dusunuldu)/i,
+    /yat[ıi]ş[ıi]?\s+(?:uygun|plan[ıi])(?:d[ıi]r)?/i,
     /(?:servisimize|servise|genel\s*cerrahi\s*servisine)\s+yat[ıi]ş/i,
+    /servis(?:e|imize)?\s+yat[ıi]r[ıi]l/i,
     /resen\s+yat[ıi]ş/i,
     /yat[ıi]r[ıi]lmas[ıi]\s+(?:uygundur|planland[ıi]|önerildi)/i,
     /servise\s+kabul/i,
     /yat[ıi]r[ıi]lacak/i,
+    /yatarak\s+tedavi/i,
     /yat[ıi]ş\s+karar[ıi]/i
   ];
   const ADMISSION_NEGATIVE = [
     /yat[ıi]ş\s+(?:endikasyonu|gerekliliği|gerekliligi)\s+(?:yoktur|yok)/i,
     /yat[ıi]ş[ıi]na\s+gerek\s+yok/i,
-    /yat[ıi]ş\s+(?:uygun\s+değildir|uygun\s+degildir|düşünülmedi|dusunulmedi)/i,
+    /yat[ıi]ş[ıi]?\s+(?:uygun\s+değildir|uygun\s+degildir|düşünülmedi|dusunulmedi)/i,
     /taburcu(?:luğu|lugu)?\s+uygundur/i
   ];
 
@@ -192,13 +196,13 @@
     return clean(record.consultId) || [norm(record.name), clean(record.date), norm(record.answer).slice(0, 80)].join("|");
   }
 
-  function normalizeConsult(raw, source = "API") {
+  function normalizeConsult(raw, source = "API", trustedPolyclinicTarget = false) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
     const answer = consultAnswer(raw);
     const request = consultRequest(raw);
     const unit = targetUnit(raw);
     const combined = clean([unit, request, answer].join(" "));
-    if (!TARGET_UNIT.test(unit || combined)) return null;
+    if (!trustedPolyclinicTarget && !TARGET_UNIT.test(unit || combined)) return null;
     const signal = admissionSignal(answer);
     if (!signal) return null;
     const record = {
@@ -226,6 +230,7 @@
     const id = flatValue(raw, ["hastaGelisId", "gelisId", "idHastaGelis"]) || clean(record?.getId?.()) || clean(record?.internalId) || flatValue(raw, ["id"]);
     return {
       hastaGelisId:id,
+      birimSevkId:flatValue(raw, ["birimSevkId", "hastaBirimSevkId", "idBirimSevk"]),
       hastaId:flatValue(raw, ["hastaId", "idHasta"]),
       name:flatValue(raw, ["adiSoyadi", "adSoyad", "hastaAdiSoyadi", "hastaAdSoyad", "hastaAdi"]),
       protocol:flatValue(raw, ["protokolNo", "protokol", "takipNo", "dosyaNo"]),
@@ -410,7 +415,13 @@
 
   function positiveConsults(payload, candidate) {
     const rows = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
-    return rows.map((raw) => normalizeConsult(raw, "FONET konsültasyon cevabı")).filter(Boolean).map((record) => {
+    const exactRows = candidate.birimSevkId ? rows.filter((raw) => clean(raw?.birimSevk?.id || raw?.birimSevkId) === candidate.birimSevkId) : [];
+    const surgeryRows = rows.filter((raw) => TARGET_UNIT.test(clean([
+      raw?.birimSevk?.birim?.adi, raw?.sonucBirim?.adi, raw?.cevapBirim?.adi,
+      raw?.konsultasyonBirim?.adi, raw?.istenenBirim?.adi
+    ].filter(Boolean).join(" "))));
+    const scopedRows = exactRows.length ? exactRows : (surgeryRows.length ? surgeryRows : rows);
+    return scopedRows.map((raw) => normalizeConsult(raw, "FONET konsültasyon cevabı", true)).filter(Boolean).map((record) => {
       const merged = {
         ...record,
         hastaGelisId:candidate.hastaGelisId || record.hastaGelisId,
