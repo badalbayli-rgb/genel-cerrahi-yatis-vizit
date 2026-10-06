@@ -1,6 +1,6 @@
 # Genel Cerrahi Yatış Vizit
 
-Güncel sürüm: **V1.5**
+Güncel sürüm: **V1.6**
 
 FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsültasyon` listesine düşen hastaları tarayan, konsültasyon cevap metninde yatış kararı bulunanları ayıran ve seçilen hastalar için bağımsız Word vizit kağıdı oluşturan tarayıcı aracıdır.
 
@@ -18,6 +18,11 @@ FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsült
 - Poliklinik listesi zaten Genel Cerrahi hedefini belirlediği için ayrıntı yanıtında birim adı boş olsa bile satırı dışlamaz; varsa sevk kimliğiyle kesin eşleştirir.
 - Poliklinik satırındaki kayıt kimliğini `birimSevkId` olarak değerlendirir ve FONET sevk servisi üzerinden gerçek `hastaGelisId` değerini çözümledikten sonra konsültasyonları tarar.
 - Seçilen hastalardan iki sütunlu DOCX vizit kağıdı ve CSV oluşturur.
+- Word çıktısı için yatış tanısını konsültasyon cevabından, gerekirse FONET tanı kaydından alır.
+- Son laboratuvar kabulünden her tetkikin güncel sonucunu derleyip Word'de tabloya koyar.
+- Güncel görüntülemeleri ve varsa raporlarını ekler.
+- Aynı hastane gelişindeki sevklerde bugüne ait orderları tarayıp ekler.
+- Bir bölümün servisine erişilemezse çıktıda "alınamadı", veri yoksa "bulunamadı" yazar.
 - Hasta verisini harici bir sunucuya göndermez; yalnızca açık FONET oturumundaki istekleri kullanır.
 
 ## Kullanım
@@ -27,7 +32,7 @@ FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsült
 3. Doktoru, ilk/son tarihi ve `Muayene Tipi: Konsültasyon` seçeneğini belirleyip **Sorgula**'ya basın.
 4. Bookmarklet'i çalıştırıp **Listeyi Tara** düğmesine basın.
 5. Araç listedeki her hastanın konsültasyon cevabını arka planda tarayana kadar bekleyin.
-6. Bulunan hastaları kontrol edip **Seçilenlerden Word** ile vizit kağıdını indirin.
+6. Bulunan hastaları kontrol edip **Seçilenlerden Word** ile tanı, kan tablosu, görüntüleme ve order içeren vizit kağıdını indirin. İlk indirmede bu bilgiler FONET'ten çekilir.
 
 ## Yatış kararının kapsamı
 

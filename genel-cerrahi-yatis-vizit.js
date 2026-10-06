@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "1.5";
+  const APP_VERSION = "1.6";
   const APP_ID = "gcyv-panel";
   const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   const TARGET_UNIT = /genel\s*cerrahi/i;
@@ -123,9 +123,14 @@
   }
 
   const baseUrl = () => `${location.origin}/hbys-rs/hbys`;
-  async function apiJson(path) {
-    const separator = path.includes("?") ? "&" : "?";
-    const response = await state.originalFetch.call(window, `${baseUrl()}${path}${separator}_dc=${Date.now()}`, {
+  async function apiJson(path, params = null) {
+    const url = new URL(`${baseUrl()}${path}`, location.origin);
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (Array.isArray(value)) value.forEach((item) => url.searchParams.append(key, String(item)));
+      else if (value != null) url.searchParams.set(key, String(value));
+    });
+    url.searchParams.set("_dc", String(Date.now()));
+    const response = await state.originalFetch.call(window, url.href, {
       credentials:"include",
       headers:{ Accept:"application/json, text/plain, */*" }
     });
@@ -206,17 +211,15 @@
   }
 
   function admissionDiagnosis(answer, request) {
-    const text = clean(answer);
-    const patterns = [
-      /(.{3,100}?)\s+tan[ıi]s[ıi]\s+ile\s+(?:servise\s+)?yat[ıi]ş/i,
-      /(.{3,100}?)\s+nedeni(?:yle|\s+ile)\s+(?:servise\s+)?yat[ıi]ş/i,
-      /(?:ön\s*tan[ıi]|tan[ıi])\s*[:\-]\s*([^.;\n]{3,100})/i
-    ];
-    for (const pattern of patterns) {
-      const value = clean(text.match(pattern)?.[1] || "").replace(/^(hastan[ıi]n|hasta)\s+/i, "");
-      if (value) return value;
+    const content = text(answer);
+    const labeled = content.match(/(?:ön\s*tan[ıi]|yat[ıi]ş\s*tan[ıi]s[ıi]|tan[ıi])\s*[:\-]\s*([^.;\n]{3,100})/i);
+    if (labeled) return clean(labeled[1]);
+    for (const sentence of content.split(/[.!?;\n]+/)) {
+      const match = sentence.match(/(?:^|\s)(?:hastan[ıi]n\s+)?([\p{L}][\p{L}\s\-\/]{2,80}?)\s+(?:ön\s*)?tan[ıi]s[ıi](?:yla|yle|\s+ile)(?:\s|$)/iu);
+      if (match) return clean(match[1]).replace(/^(?:hastan[ıi]n|hasta)\s+/i, "");
     }
-    return clip(request, 100);
+    const requestDiagnosis = text(request).match(/(?:ön\s*tan[ıi]|tan[ıi])\s*[:\-]\s*([^.;\n]{3,100})/i);
+    return requestDiagnosis ? clean(requestDiagnosis[1]) : "";
   }
 
   function recordKey(record) {
@@ -454,6 +457,7 @@
       const merged = {
         ...record,
         hastaGelisId:candidate.hastaGelisId || record.hastaGelisId,
+        birimSevkId:candidate.birimSevkId || record.birimSevkId,
         hastaId:candidate.hastaId || record.hastaId,
         name:candidate.name || record.name,
         protocol:candidate.protocol || record.protocol,
@@ -523,6 +527,224 @@
     }
   }
 
+  function diagnosisNames(root) {
+    const found = [];
+    const seen = new WeakSet();
+    const add = (value) => {
+      const name = clean(typeof value === "object" && value ? value.koduAdi || value.kodAdi || value.adi || value.aciklama || value.taniAdi : value);
+      if (name && name !== "[object Object]" && !found.some((item) => norm(item) === norm(name))) found.push(name);
+    };
+    const walk = (value, key = "", depth = 0) => {
+      if (value == null || depth > 6) return;
+      if (typeof value !== "object") { if (/tan[ıi]|diagnos/i.test(key)) add(value); return; }
+      if (seen.has(value)) return;
+      seen.add(value);
+      if (Array.isArray(value)) { value.forEach((item) => walk(item, key, depth + 1)); return; }
+      if (/tan[ıi]|diagnos/i.test(key)) add(value);
+      Object.entries(value).forEach(([childKey, child]) => walk(child, childKey, depth + 1));
+    };
+    walk(root);
+    return found.slice(0, 5);
+  }
+
+  function labRowsFromPayload(value, output = [], seen = new WeakSet()) {
+    if (!value || typeof value !== "object" || seen.has(value)) return output;
+    seen.add(value);
+    if (Array.isArray(value)) { value.forEach((item) => labRowsFromPayload(item, output, seen)); return output; }
+    const test = value?.lisHastaTupTetkik?.tetkik?.adi || value?.lisHastaTupTetkik?.tetkikAdi ||
+      value?.tetkik?.adi || value?.lisTetkik?.adi || value?.tetkikAdi || value?.parametreAdi || value?.testAdi || "";
+    const result = value?.lisHastaTupTetkik?.sonucByRapor || value?.lisHastaTupTetkik?.sonuc ||
+      value?.sonucByRapor || value?.sonuc || value?.sonucDegeri || value?.deger || "";
+    if (clean(test) && clean(result)) output.push(value);
+    ["data","rows","items","children","records","list","detayList","sonucList"].forEach((key) => {
+      if (value[key] && typeof value[key] === "object") labRowsFromPayload(value[key], output, seen);
+    });
+    return output;
+  }
+
+  function labLabel(name) {
+    const value = norm(name);
+    const labels = [
+      ["WBC", /(^|\s)wbc($|\s)|l[öo]kosit|leukocyte/], ["Hb", /(^|\s)hgb?($|\s)|hemoglobin/],
+      ["PLT", /(^|\s)plt($|\s)|trombosit/], ["Nöt", /n[öo]trofil|neutrophil/], ["Lenf", /lenfosit|lymphocyte/],
+      ["CRP", /crp|c.?reaktif/], ["PCT", /prokalsitonin|procalcitonin/], ["Kre", /kreatinin/],
+      ["Üre", /(^|\s)[üu]re($|\s)|urea/], ["Na", /sodyum|sodium|^na$/], ["K", /potasyum|potassium|^k$/],
+      ["Glu", /glukoz|glikoz|glucose/], ["AST", /^ast$|aspartat/], ["ALT", /^alt$|alanin/],
+      ["T.Bil", /bilirubin.*total|total.*bilirubin/], ["D.Bil", /bilirubin.*direkt|direkt.*bilirubin/],
+      ["Alb", /alb[üu]min|albumin/], ["INR", /(^|\s)inr($|\s)/], ["Amilaz", /amilaz/], ["Lipaz", /lipaz/]
+    ];
+    return labels.find(([, pattern]) => pattern.test(value))?.[0] || "";
+  }
+
+  function dateSortKey(value) {
+    const source = clean(value);
+    const tr = source.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (tr) return [tr[3], tr[2], tr[1], tr[4] || 0, tr[5] || 0, tr[6] || 0].map((part, index) => String(part).padStart(index ? 2 : 4, "0")).join("");
+    const iso = source.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (iso) return [iso[1], iso[2], iso[3], iso[4] || 0, iso[5] || 0, iso[6] || 0].map((part, index) => String(part).padStart(index ? 2 : 4, "0")).join("");
+    return "";
+  }
+
+  function normalizeLabRows(rows) {
+    const output = new Map();
+    rows.forEach((row) => {
+      const rawName = row?.lisHastaTupTetkik?.tetkik?.adi || row?.lisHastaTupTetkik?.tetkikAdi || row?.tetkik?.adi || row?.tetkikAdi || row?.parametreAdi || row?.testAdi || "";
+      const label = labLabel(rawName);
+      if (!label) return;
+      const value = text(row?.lisHastaTupTetkik?.sonucByRapor || row?.lisHastaTupTetkik?.sonuc || row?.sonucByRapor || row?.sonuc || row?.sonucDegeri || row?.deger || "");
+      const unit = clean(row?.lisHastaTupTetkik?.tetkik?.birim || row?.birim?.adi || row?.birim || row?.sonucBirimi || "");
+      const date = clean(row?.lisHastaTupTetkik?.sonucTarihi || row?.lisHastaTupTetkik?.onayTarihi || row?.sonucTarihi || row?.onayTarihi || row?.lisHastaTupTetkik?.lisHastaTup?.numuneAlmaTarihi || "");
+      const previous = output.get(label);
+      if (!previous || dateSortKey(date) > dateSortKey(previous.date)) output.set(label, { label, value, unit, date });
+    });
+    const order = ["WBC","Hb","PLT","Nöt","Lenf","CRP","PCT","Kre","Üre","Na","K","Glu","AST","ALT","T.Bil","D.Bil","Alb","INR","Amilaz","Lipaz"];
+    return [...output.values()].sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label));
+  }
+
+  async function fetchLatestLabs(record) {
+    const property = record.hastaGelisId ? "hastaGelisId" : "hastaId";
+    const value = record.hastaGelisId || record.hastaId;
+    if (!value) return;
+    const kabul = await apiJson("/Lis/LisRaporSonuc/getLisRaporHastaInfoList", {
+      filter:JSON.stringify([{ property, value:Number(value), type:"Long", operator:"=" }]),
+      page:1, start:0, limit:8,
+      sort:JSON.stringify([{ property:"lisKabulTarihi", direction:"DESC" }])
+    });
+    const accepts = (kabul.data || []).slice(0, 6);
+    record.labDate = clean(accepts[0]?.lisKabulTarihi || "");
+    const tubePayloads = await Promise.all(accepts.map((item) => apiJson("/Lis/LisRaporSonuc/getLisHastaTupInfo", {
+      filter:JSON.stringify([{ filterType:"kriterPanel", property:"t.lisKabul.id", value:Number(item.lisKabulId), type:"Long", operator:"=" }]),
+      page:1, start:0, limit:100
+    }).catch(() => ({ data:[] }))));
+    const barcodes = [...new Set(tubePayloads.flatMap((payload) => (payload.data || []).map((row) => clean(row.barkodNo)).filter(Boolean)))];
+    if (!barcodes.length) { record.labs = []; return; }
+    const detail = await apiJson("/Lis/LisRaporSonuc/getLisRaporDetay", {
+      filter:JSON.stringify([{ filterType:"kriterPanel", property:"t.lisHastaTup.barkodNo", value:barcodes, type:"Long", operator:"IN" }]),
+      page:1, start:0, limit:1500,
+      group:JSON.stringify([{ property:"tupAdi", direction:"ASC" }]),
+      sort:JSON.stringify([{ property:"lt.siraNo", direction:"ASC" }])
+    });
+    record.labs = normalizeLabRows(labRowsFromPayload(detail.data || []));
+    const newest = record.labs.map((item) => item.date).filter(Boolean).sort((a, b) => dateSortKey(b).localeCompare(dateSortKey(a)))[0];
+    if (newest) record.labDate = newest;
+  }
+
+  function radiologyText(payload) {
+    const root = payload?.data || payload || {};
+    return text(root.raporTextByRapor || root.raporText || root.raporMetni || root.raporHtml || root.rapor || root.bulgu || root.bulgular || root.sonuc || root.sonucAciklama || root.aciklama || "");
+  }
+
+  async function fetchImaging(record) {
+    const property = record.hastaGelisId ? "hastaGelisId" : "hastaId";
+    const value = record.hastaGelisId || record.hastaId;
+    if (!value) return;
+    const payload = await apiJson("/Ris/RisHizmetSonuc/getRisHizmetSonucInfoList", {
+      filter:JSON.stringify([{ property, value:Number(value), type:"Long", operator:"=" }]),
+      page:1, start:0, limit:20,
+      sort:JSON.stringify([{ property:"istemTarihi", direction:"DESC" }])
+    });
+    const rows = (payload.data || []).slice(0, 8);
+    record.imaging = await Promise.all(rows.map(async (row) => {
+      const reportId = clean(row.raporId || "");
+      let report = text(row.raporTextByRapor || row.raporText || row.rapor || row.bulgular || row.sonuc || "");
+      if (!report && reportId) {
+        try { report = radiologyText(await apiJson(`/Ris/RisHizmetSonuc/getRisRaporSonucByRaporId/${encodeURIComponent(reportId)}`)); } catch (error) {}
+      }
+      return {
+        date:clean(row.istemTarihi || row.risKabulTarihi || ""),
+        exam:clean(row.tetkikAdi || row.hizmetAdi || row.hizmet?.adi || row.risOrder?.hizmet?.adi || row.risOrderKodAdi || row.istemAdi || "Görüntüleme"),
+        report:clip(report, 1200)
+      };
+    }));
+  }
+
+  function todayText() {
+    const now = new Date(), pad = (value) => String(value).padStart(2, "0");
+    return `${pad(now.getDate())}.${pad(now.getMonth() + 1)}.${now.getFullYear()}`;
+  }
+
+  async function fetchOrderRows(birimSevkId) {
+    const day = todayText(), start = `${day} 00:00:00`, end = `${day} 23:59:59`;
+    const filter = [
+      { index:1, property:"tarihTuru", value:"tarihAraligiIcinde", filterType:"kriterPanel", isEnum:false, type:"String", operator:"=" },
+      { index:2, property:"tarih", value:start, filterType:"kriterPanel", type:"date", operator:"=" },
+      { index:3, property:"e.baslangicTarihi", value:start, filterType:"kriterPanel", type:"date", operator:">=" },
+      { index:4, property:"e.bitisTarihi", value:end, filterType:"kriterPanel", type:"date", operator:"<=" },
+      { index:5, property:"birimSevk.id", value:Number(birimSevkId), filterType:"kriterPanel", type:"Long", operator:"=" },
+      { index:6, property:"yeri", value:2, filterType:"kriterPanel", isEnum:true, type:"tr.com.fonet.hbys.common.enums.EOrderYeri", operator:"=" },
+      { index:7, property:"hemsireOrder", value:"false", filterType:"kriterPanel", isEnum:false, type:"String", operator:"=" }
+    ];
+    const payload = await apiJson("/Stok/EOrder/getKayitList", {
+      autoStores:["turu","stokTuru","antibiyotikTuru","ekstravazeIlacSekli","durum"],
+      filterMap:"", filter:JSON.stringify(filter), page:1, start:0, limit:200
+    });
+    return Array.isArray(payload.data) ? payload.data : [];
+  }
+
+  async function fetchOrders(record) {
+    if (!record.birimSevkId) return;
+    const rows = await fetchOrderRows(record.birimSevkId);
+    if (record.hastaGelisId) {
+      try {
+        const sevkList = await apiJson("/Tibbi/HastaBirimSevk/getKayitList", {
+          filterMap:"",
+          filter:JSON.stringify([{ index:1, property:"hastaGelis.id", value:Number(record.hastaGelisId), filterType:"kriterPanel", type:"Long", operator:"=" }]),
+          page:1, start:0, limit:100,
+          sort:JSON.stringify([{ property:"sevkTarihi", direction:"DESC" }])
+        });
+        const otherIds = [...new Set((sevkList.data || []).map((row) => clean(row.id || row.birimSevkId)).filter((id) => id && id !== clean(record.birimSevkId)))].slice(0, 5);
+        for (const id of otherIds) {
+          try { rows.push(...await fetchOrderRows(id)); }
+          catch (error) { /* Diğer sevklerdeki orderlar taranmaya devam eder. */ }
+        }
+      } catch (error) { /* Konsültasyon sevkindeki başarılı sorgu yine geçerlidir. */ }
+    }
+    const unique = rows.filter((row, index, all) => {
+      const identity = (item) => clean(item.id) || [clean(item.stok?.adi || item.adi || item.ilacAdi), clean(item.doz), clean(item.baslangicTarihi)].join("|");
+      return all.findIndex((candidate) => identity(candidate) === identity(row)) === index;
+    });
+    record.orders = unique.map((row) => ({
+      name:clean(row.stok?.adi || row.hizmetMakro?.adi || row.malzeme?.adi || row.malzemeAdi || row.adi || row.tedaviAdi || row.ilacAdi || row.aciklama || ""),
+      dose:clean(row.doz || row.miktar || ""),
+      usage:clean(row.ilacKullanimSekli?.adi || row.ilacKullanimSekliAdi || row.kullanimSekli || ""),
+      start:clean(row.baslangicTarihi || row.istemTarihi || ""),
+      status:clean(row.durum?.adi || row.durumAdi || (typeof row.durum === "string" ? row.durum : ""))
+    })).filter((row) => row.name);
+  }
+
+  async function enrichRecord(record) {
+    const errors = [];
+    try {
+      const sevkPayload = await apiJson(`/Tibbi/HastaBirimSevk/getSevkUyariInfo/${encodeURIComponent(record.birimSevkId)}`);
+      const root = sevkPayload?.data || sevkPayload || {};
+      const ids = inferPatientIds(root);
+      record.hastaGelisId = record.hastaGelisId || ids.hastaGelisId;
+      record.hastaId = record.hastaId || ids.hastaId;
+      const diagnoses = diagnosisNames(root);
+      if (!record.diagnosis && diagnoses.length) record.diagnosis = diagnoses.join(", ");
+    } catch (error) { if (!record.diagnosis) errors.push("Tanı"); }
+    const tasks = [["Kan", fetchLatestLabs], ["Görüntüleme", fetchImaging], ["Order", fetchOrders]];
+    await Promise.all(tasks.map(async ([label, handler]) => { try { await handler(record); } catch (error) { errors.push(label); } }));
+    record.detailErrors = errors;
+    record.detailsLoaded = errors.length === 0;
+  }
+
+  async function enrichRecords(records) {
+    const pending = records.filter((record) => !record.detailsLoaded);
+    let done = 0;
+    const queue = [...pending];
+    const worker = async () => {
+      while (queue.length) {
+        const record = queue.shift();
+        if (!record) return;
+        await enrichRecord(record);
+        done += 1;
+        setMessage(`${done}/${pending.length} hastanın tanı, kan, görüntüleme ve order bilgileri hazırlanıyor…`);
+      }
+    };
+    await Promise.all(Array.from({ length:Math.min(3, queue.length) }, worker));
+  }
+
   function selectedRecords() {
     return [...state.records.values()].filter((record) => record.selected).sort((a, b) =>
       clean(a.date).localeCompare(clean(b.date), "tr", { numeric:true }) || clean(a.name).localeCompare(clean(b.name), "tr")
@@ -570,12 +792,30 @@
     return `<w:p><w:pPr>${options.keep ? "<w:keepNext/>" : ""}${options.align ? `<w:jc w:val="${options.align}"/>` : ""}<w:spacing w:before="${options.before || 0}" w:after="${options.after || 0}" w:line="190" w:lineRule="auto"/></w:pPr>${runs}</w:p>`;
   }
 
+  function wordTableCell(value, options = {}) {
+    const width = Number(options.width || 1000);
+    const shade = options.shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${options.shade}"/>` : "";
+    const bold = options.bold ? "<w:b/>" : "";
+    return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shade}<w:tcMar><w:top w:w="18" w:type="dxa"/><w:left w:w="35" w:type="dxa"/><w:bottom w:w="18" w:type="dxa"/><w:right w:w="35" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Tahoma" w:hAnsi="Tahoma"/>${bold}<w:sz w:val="15"/><w:szCs w:val="15"/></w:rPr><w:t xml:space="preserve">${xmlEsc(value || "—")}</w:t></w:r></w:p></w:tc>`;
+  }
+
+  function wordLabTable(record) {
+    const labs = Array.isArray(record.labs) ? record.labs : [];
+    if (!labs.length) return wordParagraph(record.detailErrors?.includes("Kan") ? "Kan sonuçları alınamadı." : "Son güncel kan sonucu bulunamadı.", { size:8 });
+    const pairs = [];
+    for (let index = 0; index < labs.length; index += 2) pairs.push([labs[index], labs[index + 1]]);
+    const borders = '<w:tblBorders><w:top w:val="single" w:sz="3" w:color="CBD5E1"/><w:left w:val="single" w:sz="3" w:color="CBD5E1"/><w:bottom w:val="single" w:sz="3" w:color="CBD5E1"/><w:right w:val="single" w:sz="3" w:color="CBD5E1"/><w:insideH w:val="single" w:sz="3" w:color="E2E8F0"/><w:insideV w:val="single" w:sz="3" w:color="E2E8F0"/></w:tblBorders>';
+    const header = `<w:tr>${wordTableCell("Tetkik", { width:700, bold:true, shade:"E2E8F0" })}${wordTableCell("Sonuç", { width:1500, bold:true, shade:"E2E8F0" })}${wordTableCell("Tetkik", { width:700, bold:true, shade:"E2E8F0" })}${wordTableCell("Sonuç", { width:1500, bold:true, shade:"E2E8F0" })}</w:tr>`;
+    const rows = pairs.map(([left, right]) => `<w:tr>${wordTableCell(left?.label, { width:700, bold:true })}${wordTableCell(left ? `${left.value}${left.unit ? " " + left.unit : ""}` : "", { width:1500 })}${wordTableCell(right?.label, { width:700, bold:true })}${wordTableCell(right ? `${right.value}${right.unit ? " " + right.unit : ""}` : "", { width:1500 })}</w:tr>`).join("");
+    return `<w:tbl><w:tblPr><w:tblW w:w="4400" w:type="dxa"/><w:tblLayout w:type="fixed"/>${borders}</w:tblPr><w:tblGrid><w:gridCol w:w="700"/><w:gridCol w:w="1500"/><w:gridCol w:w="700"/><w:gridCol w:w="1500"/></w:tblGrid>${header}${rows}</w:tbl>`;
+  }
+
   function wordPatient(record) {
     const title = [record.name, record.ageSex, record.protocol ? "Prot: " + record.protocol : ""].filter(Boolean).join(" · ");
     return [
       wordParagraph(title, { size:15, bold:true, keep:true, after:30 }),
       wordParagraph("YATIŞ KARARI: " + (record.signal || "Yatış kararı"), { size:11, bold:true, color:"B91C1C" }),
-      wordParagraph("TANI: " + (record.diagnosis || "—"), { size:11, bold:true }),
+      wordParagraph("TANI: " + (record.diagnosis || (record.detailErrors?.includes("Tanı") ? "Tanı kaydı alınamadı" : "Tanı kaydı bulunamadı")), { size:11, bold:true }),
       wordParagraph("Konsültasyon Tarihi: " + (record.date || "—"), { size:9 }),
       wordParagraph("İsteyen Birim: " + (record.requestingUnit || "—"), { size:9 }),
       wordParagraph("Konsültasyon Birimi: " + (record.unit || "Genel Cerrahi"), { size:9 }),
@@ -583,6 +823,12 @@
       wordParagraph(record.request || "—", { size:9 }),
       wordParagraph("GENEL CERRAHİ CEVABI", { size:9, bold:true, keep:true, before:80 }),
       wordParagraph(record.answer || "—", { size:9 }),
+      wordParagraph("SON GÜNCEL KANLAR" + (record.labDate ? " · " + record.labDate : ""), { size:9, bold:true, keep:true, before:90 }),
+      wordLabTable(record),
+      wordParagraph("GÖRÜNTÜLEMELER", { size:9, bold:true, keep:true, before:90 }),
+      ...((record.imaging || []).length ? record.imaging.map((item) => wordParagraph(`${item.date || ""} ${item.exam || "Görüntüleme"}${item.report ? "\n" + item.report : "\nRapor bulunamadı."}`, { size:8 })) : [wordParagraph(record.detailErrors?.includes("Görüntüleme") ? "Görüntüleme bilgileri alınamadı." : "Görüntüleme bulunamadı.", { size:8 })]),
+      wordParagraph("ORDER", { size:9, bold:true, keep:true, before:90 }),
+      ...((record.orders || []).length ? record.orders.map((item, index) => wordParagraph(`${index + 1}. ${item.name}${item.dose ? " · " + item.dose : ""}${item.usage ? " · " + item.usage : ""}${item.start ? " · " + item.start : ""}${item.status ? " · " + item.status : ""}`, { size:8 })) : [wordParagraph(record.detailErrors?.includes("Order") ? "Order bilgileri alınamadı." : "Bugüne ait order bulunamadı.", { size:8 })]),
       wordParagraph("BH: ______________________________________________", { size:9, before:90 }),
       wordParagraph("Kİ: _______________________________________________", { size:9 }),
       wordParagraph("GO: ______________________________________________", { size:9 }),
@@ -610,11 +856,20 @@
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
 
-  function exportWord() {
+  async function exportWord() {
     const records = selectedRecords();
     if (!records.length) return alert("Önce en az bir yatış verilen hasta seçin.");
-    downloadBytes(docxBytes(records), `Genel-Cerrahi-Yatis-Vizit-${new Date().toISOString().slice(0,10)}.docx`, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-    setMessage(`${records.length} hasta için Word vizit kağıdı indirildi.`);
+    state.busy = true;
+    render();
+    try {
+      await enrichRecords(records);
+      downloadBytes(docxBytes(records), `Genel-Cerrahi-Yatis-Vizit-${new Date().toISOString().slice(0,10)}.docx`, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      const failedSections = [...new Set(records.flatMap((record) => record.detailErrors || []))];
+      setMessage(`${records.length} hasta için Word indirildi.${failedSections.length ? ` Alınamayan bölümler: ${failedSections.join(", ")}.` : ""}`);
+    } finally {
+      state.busy = false;
+      render();
+    }
   }
 
   function csvCell(value) { return '"' + String(value == null ? "" : value).replace(/"/g, '""') + '"'; }
