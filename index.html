@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Genel Cerrahi Yatış Vizit</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#10233b;background:#eef5fb}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box}.card{width:min(820px,100%);background:white;border-radius:22px;box-shadow:0 20px 60px #17395a26;padding:34px;box-sizing:border-box}h1{margin:0 0 10px;color:#0b4f7c;font-size:clamp(26px,5vw,40px)}p,li{line-height:1.55}.bookmark{display:inline-block;margin:18px 0;padding:15px 20px;border-radius:10px;background:#0878bd;color:white;text-decoration:none;font-weight:850;box-shadow:0 8px 20px #0878bd44;cursor:grab}.copy{border:0;border-radius:10px;background:#334155;color:white;font-weight:750;padding:13px 18px;cursor:pointer}.notice{margin-top:20px;padding:14px;border-radius:10px;background:#e0f2fe;border-left:5px solid #0284c7}.ok{color:#08734f;font-weight:750}code{background:#f1f5f9;padding:2px 5px;border-radius:4px}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Genel Cerrahi Yatış Vizit</h1>
+    <p>Genel Cerrahi'ye gönderilen konsültasyonları tarar, cevabında yatış kararı bulunan hastaları listeler ve seçilen hastalar için Word vizit kağıdı hazırlar.</p>
+    <a id="bookmark" class="bookmark" href="#" draggable="true">Genel Cerrahi Yatış Vizit</a><br>
+    <button id="copy" class="copy">Yer imi kodunu kopyala</button>
+    <div id="status" class="notice">Mavi düğmeyi yer imleri çubuğuna sürükleyin.</div>
+    <ol>
+      <li>FONET'te <b>Poliklinik</b> ekranını açın.</li>
+      <li>Doktoru ve tarih aralığını seçin; <b>Muayene Tipi: Konsültasyon</b> iken <b>Sorgula</b>'ya basın.</li>
+      <li>Yer imine basıp <b>Listeyi Tara</b> seçeneğini çalıştırın.</li>
+      <li>Yatış kararı bulunan hastaları kontrol edip <b>Seçilenlerden Word</b> seçeneğini kullanın.</li>
+    </ol>
+  </main>
+  <script>
+    const loader="(async()=>{try{const u='https://api.github.com/repos/badalbayli-rgb/genel-cerrahi-yatis-vizit/contents/genel-cerrahi-yatis-vizit.js?ref=main&t='+Date.now();const r=await fetch(u,{cache:'no-store',credentials:'omit',headers:{Accept:'application/vnd.github.raw+json'}});if(!r.ok)throw new Error('GitHub HTTP '+r.status);const c=await r.text();if(!c.includes('__GENEL_CERRAHI_YATIS_VIZIT__'))throw new Error('Dosya dogrulanamadi');(0,eval)(c+'\\n//# sourceURL=genel-cerrahi-yatis-vizit.js')}catch(e){alert('Genel Cerrahi Yatis Vizit yuklenemedi:\\n'+(e&&e.message?e.message:e))}})()";
+    const value="javascript:"+loader;
+    document.getElementById("bookmark").href=value;
+    document.getElementById("copy").onclick=async()=>{await navigator.clipboard.writeText(value);document.getElementById("status").innerHTML='<span class="ok">Yer imi kodu kopyalandı.</span> Yeni bir yer imi oluşturup URL alanına yapıştırın.'};
+  </script>
+</body>
+</html>
