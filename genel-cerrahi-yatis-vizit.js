@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2.0";
+  const APP_VERSION = "2.1";
   const APP_ID = "gcyv-panel";
   const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   const TARGET_UNIT = /genel\s*cerrahi/i;
@@ -33,6 +33,7 @@
     records: new Map(),
     candidates: new Map(),
     consultCache: new Map(),
+    positiveConsultIds: new Set(),
     captured: 0,
     scannedRows: 0,
     errors: [],
@@ -117,7 +118,7 @@
     );
     const hastaId = clean(
       raw.hasta?.id || raw.hastaGelis?.hasta?.id || raw.birimSevk?.hastaGelis?.hasta?.id ||
-      raw.hastaBirimSevk?.hastaGelis?.hasta?.id || deepFindId(raw, (value) => value.id && value.kimlik)
+      raw.hastaBirimSevk?.hastaGelis?.hasta?.id
     );
     return { birimSevkId, hastaGelisId, hastaId };
   }
@@ -225,8 +226,9 @@
   }
 
   function recordKey(record) {
-    if (clean(record.hastaId)) return `hasta:${clean(record.hastaId)}`;
-    if (clean(record.hastaGelisId)) return `gelis:${clean(record.hastaGelisId)}`;
+    const name = record.name === "Hasta adı alınamadı" ? "?" : norm(record.name);
+    if (clean(record.hastaGelisId)) return `gelis:${clean(record.hastaGelisId)}|${name}`;
+    if (clean(record.hastaId) && name !== "?") return `hasta:${clean(record.hastaId)}|${name}`;
     return `kons:${clean(record.consultId) || [norm(record.name), clean(record.date), norm(record.answer).slice(0, 80)].join("|")}`;
   }
 
@@ -280,9 +282,12 @@
 
   function mergeRecord(record) {
     if (!record?.key) return false;
+    const compatibleName = (item) => !record.name || record.name === "Hasta adı alınamadı" ||
+      !item.name || item.name === "Hasta adı alınamadı" || norm(item.name) === norm(record.name);
     const existingKey = [...state.records.entries()].find(([, item]) =>
-      (clean(record.hastaId) && clean(item.hastaId) === clean(record.hastaId)) ||
-      (clean(record.hastaGelisId) && clean(item.hastaGelisId) === clean(record.hastaGelisId))
+      (compatibleName(item) && clean(record.hastaGelisId) && clean(item.hastaGelisId) === clean(record.hastaGelisId)) ||
+      (record.name && item.name && record.name !== "Hasta adı alınamadı" && item.name !== "Hasta adı alınamadı" &&
+        norm(item.name) === norm(record.name) && clean(record.hastaId) && clean(item.hastaId) === clean(record.hastaId))
     )?.[0];
     if (existingKey) record.key = existingKey;
     const previous = state.records.get(record.key);
@@ -504,7 +509,10 @@
       state.consultCache.set(candidate.hastaGelisId, pending);
     }
     const payload = await pending;
-    positiveConsults(payload, candidate).forEach(mergeRecord);
+    positiveConsults(payload, candidate).forEach((record) => {
+      state.positiveConsultIds.add([record.hastaGelisId, record.consultId || record.date, norm(record.answer).slice(0, 60)].join("|"));
+      mergeRecord(record);
+    });
   }
 
   async function scanWorker(queue) {
@@ -525,6 +533,7 @@
     state.done = 0;
     state.records.clear();
     state.consultCache.clear();
+    state.positiveConsultIds.clear();
     state.errors = [];
     render();
     try {
@@ -533,7 +542,7 @@
       const queue = [...candidates];
       await Promise.all(Array.from({ length:Math.min(4, queue.length) }, () => scanWorker(queue)));
       const errorNote = state.errors.length ? ` Hata: ${state.errors.length}. İlk hata: ${state.errors[0]}` : "";
-      setMessage(`Tarama tamamlandı: ${state.total} konsültasyondan ${state.records.size} yatış kararlı Genel Cerrahi kaydı bulundu.${errorNote}`);
+      setMessage(`Tarama tamamlandı: ${state.total} liste kaydı, ${state.positiveConsultIds.size} olumlu konsültasyon, ${state.records.size} tekil hasta.${errorNote}`);
     } catch (error) {
       state.errors.push(clean(error?.message || error));
       setMessage(clean(error?.message || error));
@@ -1146,7 +1155,7 @@
     const stats = document.getElementById("gcyv-stats");
     if (!body || !stats) return;
     const records = [...state.records.values()].sort((a, b) => clean(b.date).localeCompare(clean(a.date), "tr", { numeric:true }));
-    stats.textContent = `Poliklinik listesi: ${state.scannedRows} | Taranan: ${state.done}/${state.total} | Yatış verilen: ${records.length} | Seçili: ${records.filter((record) => record.selected).length} | Hata: ${state.errors.length}`;
+    stats.textContent = `Poliklinik listesi: ${state.scannedRows} | Taranan: ${state.done}/${state.total} | Olumlu kons: ${state.positiveConsultIds.size} | Tekil hasta: ${records.length} | Seçili: ${records.filter((record) => record.selected).length} | Hata: ${state.errors.length}`;
     body.innerHTML = records.map((record) => `<tr>
       <td><input type="checkbox" data-select="${esc(record.key)}" ${record.selected ? "checked" : ""}></td>
       <td><strong>${esc(record.name)}</strong><div class="muted">${esc([record.ageSex, record.protocol && "Prot " + record.protocol].filter(Boolean).join(" · "))}</div></td>
