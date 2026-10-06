@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "1.3";
+  const APP_VERSION = "1.4";
   const APP_ID = "gcyv-panel";
   const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   const TARGET_UNIT = /genel\s*cerrahi/i;
@@ -93,6 +93,33 @@
       if (match && clean(match[1])) return clean(match[1]);
     }
     return "";
+  }
+
+  function deepFindId(object, predicate, depth = 0, seen = new WeakSet()) {
+    if (!object || typeof object !== "object" || depth > 6 || seen.has(object)) return "";
+    seen.add(object);
+    try { if (predicate(object)) return clean(object.id); } catch (error) {}
+    for (const value of Object.values(object)) {
+      const found = deepFindId(value, predicate, depth + 1, seen);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  function inferPatientIds(raw = {}) {
+    const birimSevkId = clean(
+      raw.birimSevk?.id || raw.klinik?.birimSevk?.id || raw.hastaBirimSevk?.id ||
+      deepFindId(raw, (value) => value.id && value.birim && value.hastaGelis)
+    );
+    const hastaGelisId = clean(
+      raw.hastaGelis?.id || raw.birimSevk?.hastaGelis?.id || raw.hastaBirimSevk?.hastaGelis?.id ||
+      deepFindId(raw, (value) => value.id && value.hasta && (value.kodu || value.muracaatTarihi))
+    );
+    const hastaId = clean(
+      raw.hasta?.id || raw.hastaGelis?.hasta?.id || raw.birimSevk?.hastaGelis?.hasta?.id ||
+      raw.hastaBirimSevk?.hastaGelis?.hasta?.id || deepFindId(raw, (value) => value.id && value.kimlik)
+    );
+    return { birimSevkId, hastaGelisId, hastaId };
   }
 
   const baseUrl = () => `${location.origin}/hbys-rs/hbys`;
@@ -227,11 +254,12 @@
   }
 
   function polyclinicCandidate(raw = {}, record = null, index = 0) {
-    const id = flatValue(raw, ["hastaGelisId", "gelisId", "idHastaGelis"]) || clean(record?.getId?.()) || clean(record?.internalId) || flatValue(raw, ["id"]);
+    const inferred = inferPatientIds(raw);
+    const recordId = clean(record?.getId?.()) || clean(record?.internalId) || flatValue(raw, ["id"]);
     return {
-      hastaGelisId:id,
-      birimSevkId:flatValue(raw, ["birimSevkId", "hastaBirimSevkId", "idBirimSevk"]),
-      hastaId:flatValue(raw, ["hastaId", "idHasta"]),
+      hastaGelisId:inferred.hastaGelisId || flatValue(raw, ["hastaGelisId", "gelisId", "idHastaGelis"]),
+      birimSevkId:inferred.birimSevkId || flatValue(raw, ["birimSevkId", "hastaBirimSevkId", "idBirimSevk"]) || recordId,
+      hastaId:inferred.hastaId || flatValue(raw, ["hastaId", "idHasta"]),
       name:flatValue(raw, ["adiSoyadi", "adSoyad", "hastaAdiSoyadi", "hastaAdSoyad", "hastaAdi"]),
       protocol:flatValue(raw, ["protokolNo", "protokol", "takipNo", "dosyaNo"]),
       ageSex:flatValue(raw, ["yasCinsiyet", "yasCins", "yas"]),
@@ -366,7 +394,8 @@
     return Array.from(panel.querySelectorAll("tr[data-recordid]")).map((row, index) => {
       const cells = Array.from(row.querySelectorAll("td")).map((cell) => clean(cell.innerText || cell.textContent || ""));
       return {
-        hastaGelisId:clean(row.dataset.recordid),
+        hastaGelisId:"",
+        birimSevkId:clean(row.dataset.recordid),
         date:cells[4] || "",
         name:cells[5] || "",
         requestingUnit:cells[6] || "",
@@ -405,8 +434,8 @@
       list = domCandidates();
       if (!list.length) throw error;
     }
-    const readable = list.filter((item) => item.hastaGelisId);
-    state.candidates = new Map(readable.map((item, index) => [`${item.hastaGelisId}|${index}`, item]));
+    const readable = list.filter((item) => item.hastaGelisId || item.birimSevkId);
+    state.candidates = new Map(readable.map((item, index) => [`${item.hastaGelisId || item.birimSevkId}|${index}`, item]));
     state.total = readable.length;
     state.scannedRows = list.length;
     if (!readable.length) throw new Error("Listede okunabilir hasta kaydı bulunamadı.");
@@ -440,6 +469,15 @@
   }
 
   async function scanCandidate(candidate) {
+    if (!candidate.hastaGelisId && candidate.birimSevkId) {
+      const sevkPayload = await apiJson(`/Tibbi/HastaBirimSevk/getSevkUyariInfo/${encodeURIComponent(candidate.birimSevkId)}`);
+      const root = sevkPayload?.data || sevkPayload || {};
+      const sevk = root.hastaBirimSevk || root.birimSevk || {};
+      const gelis = sevk.hastaGelis || root.hastaGelis || {};
+      candidate.hastaGelisId = clean(gelis.id || inferPatientIds(root).hastaGelisId);
+      candidate.hastaId = candidate.hastaId || clean(gelis.hasta?.id || inferPatientIds(root).hastaId);
+    }
+    if (!candidate.hastaGelisId) throw new Error("Hasta geliş kimliği çözümlenemedi");
     let pending = state.consultCache.get(candidate.hastaGelisId);
     if (!pending) {
       pending = apiJson(`/Poliklinik/Poliklinik/getHastaGelisKonsultasyonList/${encodeURIComponent(candidate.hastaGelisId)}/1`);
