@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "1.4";
+  const APP_VERSION = "1.5";
   const APP_ID = "gcyv-panel";
   const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   const TARGET_UNIT = /genel\s*cerrahi/i;
@@ -125,7 +125,7 @@
   const baseUrl = () => `${location.origin}/hbys-rs/hbys`;
   async function apiJson(path) {
     const separator = path.includes("?") ? "&" : "?";
-    const response = await state.originalFetch(`${baseUrl()}${path}${separator}_dc=${Date.now()}`, {
+    const response = await state.originalFetch.call(window, `${baseUrl()}${path}${separator}_dc=${Date.now()}`, {
       credentials:"include",
       headers:{ Accept:"application/json, text/plain, */*" }
     });
@@ -311,7 +311,7 @@
   function installNetworkCapture() {
     if (window.fetch === state.patchedFetch) return;
     state.patchedFetch = async function(...args) {
-      const response = await state.originalFetch.apply(this, args);
+      const response = await state.originalFetch.apply(window, args);
       try {
         const url = String(args[0]?.url || args[0] || "");
         const contentType = response.headers?.get?.("content-type") || "";
@@ -421,7 +421,7 @@
           url.searchParams.set("limit", String(source.total));
           url.searchParams.set("_dc", String(Date.now()));
           Object.entries(proxy?.extraParams || {}).forEach(([key, value]) => url.searchParams.set(key, String(value)));
-          const response = await state.originalFetch(url.href, { credentials:"include", headers:{ Accept:"application/json, text/plain, */*" } });
+          const response = await state.originalFetch.call(window, url.href, { credentials:"include", headers:{ Accept:"application/json, text/plain, */*" } });
           if (response.ok) {
             const payload = await response.json();
             const rows = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
