@@ -1,6 +1,6 @@
 # Genel Cerrahi Yatış Vizit
 
-Güncel sürüm: **V1.7**
+Güncel sürüm: **V1.8**
 
 FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsültasyon` listesine düşen hastaları tarayan, konsültasyon cevap metninde yatış kararı bulunanları ayıran ve seçilen hastalar için bağımsız Word vizit kağıdı oluşturan tarayıcı aracıdır.
 
@@ -19,9 +19,9 @@ FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsült
 - Poliklinik satırındaki kayıt kimliğini `birimSevkId` olarak değerlendirir ve FONET sevk servisi üzerinden gerçek `hastaGelisId` değerini çözümledikten sonra konsültasyonları tarar.
 - Seçilen hastalardan iki sütunlu DOCX vizit kağıdı ve CSV oluşturur.
 - Word çıktısı için yatış tanısını konsültasyon cevabından, gerekirse FONET tanı kaydından alır.
-- Son laboratuvar kabulünden her tetkikin güncel sonucunu derleyip Word'de tabloya koyar.
+- Son laboratuvar kabullerinden güncel kan ve koagülasyon sonuçlarını, diğer kan tetkikleri dahil, Word'de gruplu tabloya koyar. TİT sonuçlarını göstermez.
 - Güncel görüntülemeleri ve varsa raporlarını ekler.
-- Görüntüleme raporunda yalnız kalın yazılmış bulguları gösterir; `Sonuç:` başlığından sonrasını dışarıda bırakır.
+- Görüntüleme raporunda `Bulgular:` bölümündeki kalın yazılmış hasta bulgularını gösterir; teknik/kimlik üst bilgisini ve `Sonuç:` başlığından sonrasını dışarıda bırakır. Bulgular bölümünde kalın biçimlendirme yoksa bölüm metnini gösterir.
 - Aynı hastane gelişindeki sevklerde bugüne ait orderları tarayıp ekler.
 - Word çıktısında klinik metinleri koruyarak boş satırları ve paragraf aralıklarını azaltır.
 - Bir bölümün servisine erişilemezse çıktıda "alınamadı", veri yoksa "bulunamadı" yazar.
@@ -34,7 +34,7 @@ FONET **Poliklinik** ekranında Genel Cerrahi doktorunun `Muayene Tipi: Konsült
 3. Doktoru, ilk/son tarihi ve `Muayene Tipi: Konsültasyon` seçeneğini belirleyip **Sorgula**'ya basın.
 4. Bookmarklet'i çalıştırıp **Listeyi Tara** düğmesine basın.
 5. Araç listedeki her hastanın konsültasyon cevabını arka planda tarayana kadar bekleyin.
-6. Bulunan hastaları kontrol edip **Seçilenlerden Word** ile tanı, kan tablosu, görüntüleme ve order içeren vizit kağıdını indirin. İlk indirmede bu bilgiler FONET'ten çekilir.
+6. Bulunan hastaları kontrol edip **Seçilenlerden Word** ile tanı, laboratuvar tablosu, görüntüleme ve order içeren vizit kağıdını indirin. İlk indirmede bu bilgiler FONET'ten çekilir.
 
 ## Yatış kararının kapsamı
 

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "1.7";
+  const APP_VERSION = "1.8";
   const APP_ID = "gcyv-panel";
   const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   const TARGET_UNIT = /genel\s*cerrahi/i;
@@ -576,6 +576,31 @@
     return labels.find(([, pattern]) => pattern.test(value))?.[0] || "";
   }
 
+  function labGroup(row, name) {
+    const source = [row?.tupAdi, row?.grupAdi, row?.numuneAdi, row?.lisHastaTupTetkik?.lisHastaTup?.tupAdi,
+      row?.lisHastaTupTetkik?.lisHastaTup?.numuneAdi, row?.lisHastaTupTetkik?.lisHastaTup?.lisTup?.adi].map(clean).join(" ");
+    const sample = norm(source);
+    const test = norm(name);
+    if (/idrar|urine|(^|\s)tit($|\s)|tam idrar/.test(sample) || /idrar|urine|(^|\s)tit($|\s)/.test(test)) return "urine";
+    if (/koag|coag|pıhtı|pihti|sitrat/.test(sample) || /(^|\s)(?:pt|inr|aptt|ptt|fibrinojen|fibrinogen|d.?dimer|trombin zamanı)(?:$|\s)/.test(test)) return "coag";
+    if (labLabel(name)) return "blood";
+    return "other";
+  }
+
+  function labDisplayName(name, group) {
+    const raw = clean(name).replace(/^(?:tam idrar tetkiki|idrar|tit)\s*[-:·]?\s*/i, "");
+    if (group === "urine") return raw || clean(name);
+    if (group === "coag") {
+      const value = norm(name);
+      if (/(^|\s)inr($|\s)/.test(value)) return "INR";
+      if (/(^|\s)(aptt|a.?ptt|ptt)($|\s)|aktive.*parsiyel/.test(value)) return "aPTT";
+      if (/(^|\s)pt($|\s)|protrombin zamanı/.test(value)) return "PT";
+      if (/fibrinojen|fibrinogen/.test(value)) return "Fibrinojen";
+      if (/d.?dimer/.test(value)) return "D-Dimer";
+    }
+    return labLabel(name) || clean(name);
+  }
+
   function dateSortKey(value) {
     const source = clean(value);
     const tr = source.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
@@ -589,16 +614,22 @@
     const output = new Map();
     rows.forEach((row) => {
       const rawName = row?.lisHastaTupTetkik?.tetkik?.adi || row?.lisHastaTupTetkik?.tetkikAdi || row?.tetkik?.adi || row?.tetkikAdi || row?.parametreAdi || row?.testAdi || "";
-      const label = labLabel(rawName);
-      if (!label) return;
+      if (!clean(rawName)) return;
+      const group = labGroup(row, rawName);
+      if (group === "urine") return;
+      const label = labDisplayName(rawName, group);
       const value = text(row?.lisHastaTupTetkik?.sonucByRapor || row?.lisHastaTupTetkik?.sonuc || row?.sonucByRapor || row?.sonuc || row?.sonucDegeri || row?.deger || "");
+      if (!clean(value)) return;
       const unit = clean(row?.lisHastaTupTetkik?.tetkik?.birim || row?.birim?.adi || row?.birim || row?.sonucBirimi || "");
       const date = clean(row?.lisHastaTupTetkik?.sonucTarihi || row?.lisHastaTupTetkik?.onayTarihi || row?.sonucTarihi || row?.onayTarihi || row?.lisHastaTupTetkik?.lisHastaTup?.numuneAlmaTarihi || "");
-      const previous = output.get(label);
-      if (!previous || dateSortKey(date) > dateSortKey(previous.date)) output.set(label, { label, value, unit, date });
+      const key = `${group}|${norm(label)}`;
+      const previous = output.get(key);
+      if (!previous || dateSortKey(date) > dateSortKey(previous.date)) output.set(key, { label, value, unit, date, group });
     });
-    const order = ["WBC","Hb","PLT","Nöt","Lenf","CRP","PCT","Kre","Üre","Na","K","Glu","AST","ALT","T.Bil","D.Bil","Alb","INR","Amilaz","Lipaz"];
-    return [...output.values()].sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label));
+    const groupOrder = ["blood", "coag", "other"];
+    const order = ["WBC","Hb","PLT","Nöt","Lenf","CRP","PCT","Kre","Üre","Na","K","Glu","AST","ALT","T.Bil","D.Bil","Alb","Amilaz","Lipaz","PT","INR","aPTT","Fibrinojen","D-Dimer"];
+    return [...output.values()].sort((a, b) => groupOrder.indexOf(a.group) - groupOrder.indexOf(b.group) ||
+      (order.indexOf(a.label) < 0 ? 999 : order.indexOf(a.label)) - (order.indexOf(b.label) < 0 ? 999 : order.indexOf(b.label)) || a.label.localeCompare(b.label, "tr"));
   }
 
   async function fetchLatestLabs(record) {
@@ -669,21 +700,25 @@
       }
     }
     const plain = segments.map((item) => item.value).join("");
-    const resultAt = plain.search(/sonu[çc]\s*:/i);
-    const limit = resultAt < 0 ? plain.length : resultAt;
+    const findings = /bulgular\s*:/i.exec(plain);
+    const start = findings ? findings.index + findings[0].length : 0;
+    const resultAt = plain.slice(start).search(/sonu[çc]\s*:/i);
+    const limit = resultAt < 0 ? plain.length : start + resultAt;
     const pieces = [];
     let offset = 0;
     for (const item of segments) {
       if (offset >= limit) break;
-      const portion = item.value.slice(0, Math.max(0, limit - offset));
+      const portion = item.value.slice(Math.max(0, start - offset), Math.max(0, limit - offset));
       if (item.bold && portion.trim()) pieces.push(portion);
       offset += item.value.length;
     }
     if (!pieces.length && !/<[^>]+>/.test(source)) {
-      const markdown = source.slice(0, resultAt < 0 ? undefined : resultAt).match(/\*\*([^*]+)\*\*/g) || [];
+      const markdown = plain.slice(start, limit).match(/\*\*([^*]+)\*\*/g) || [];
       return markdown.map((item) => clean(item.slice(2, -2))).filter(Boolean).join("\n");
     }
-    return pieces.map((item) => clean(item)).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    if (pieces.length) return pieces.map((item) => clean(item)).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    // Bazı RIS raporlarında Bulgular alanında hiç kalın biçimlendirme yoktur.
+    return findings ? clean(plain.slice(start, limit)).replace(/\s+/g, " ") : "";
   }
 
   async function fetchImaging(record) {
@@ -849,17 +884,23 @@
     const width = Number(options.width || 1000);
     const shade = options.shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${options.shade}"/>` : "";
     const bold = options.bold ? "<w:b/>" : "";
-    return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shade}<w:tcMar><w:top w:w="10" w:type="dxa"/><w:left w:w="30" w:type="dxa"/><w:bottom w:w="10" w:type="dxa"/><w:right w:w="30" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Tahoma" w:hAnsi="Tahoma"/>${bold}<w:sz w:val="15"/><w:szCs w:val="15"/></w:rPr><w:t xml:space="preserve">${xmlEsc(value || "—")}</w:t></w:r></w:p></w:tc>`;
+    return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${options.span ? `<w:gridSpan w:val="${options.span}"/>` : ""}${shade}<w:tcMar><w:top w:w="10" w:type="dxa"/><w:left w:w="30" w:type="dxa"/><w:bottom w:w="10" w:type="dxa"/><w:right w:w="30" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Tahoma" w:hAnsi="Tahoma"/>${bold}<w:sz w:val="15"/><w:szCs w:val="15"/></w:rPr><w:t xml:space="preserve">${xmlEsc(value || "—")}</w:t></w:r></w:p></w:tc>`;
   }
 
   function wordLabTable(record) {
     const labs = Array.isArray(record.labs) ? record.labs : [];
     if (!labs.length) return wordParagraph(record.detailErrors?.includes("Kan") ? "Kan sonuçları alınamadı." : "Son güncel kan sonucu bulunamadı.", { size:8 });
-    const pairs = [];
-    for (let index = 0; index < labs.length; index += 2) pairs.push([labs[index], labs[index + 1]]);
     const borders = '<w:tblBorders><w:top w:val="single" w:sz="3" w:color="CBD5E1"/><w:left w:val="single" w:sz="3" w:color="CBD5E1"/><w:bottom w:val="single" w:sz="3" w:color="CBD5E1"/><w:right w:val="single" w:sz="3" w:color="CBD5E1"/><w:insideH w:val="single" w:sz="3" w:color="E2E8F0"/><w:insideV w:val="single" w:sz="3" w:color="E2E8F0"/></w:tblBorders>';
     const header = `<w:tr>${wordTableCell("Tetkik", { width:700, bold:true, shade:"E2E8F0" })}${wordTableCell("Sonuç", { width:1500, bold:true, shade:"E2E8F0" })}${wordTableCell("Tetkik", { width:700, bold:true, shade:"E2E8F0" })}${wordTableCell("Sonuç", { width:1500, bold:true, shade:"E2E8F0" })}</w:tr>`;
-    const rows = pairs.map(([left, right]) => `<w:tr>${wordTableCell(left?.label, { width:700, bold:true })}${wordTableCell(left ? `${left.value}${left.unit ? " " + left.unit : ""}` : "", { width:1500 })}${wordTableCell(right?.label, { width:700, bold:true })}${wordTableCell(right ? `${right.value}${right.unit ? " " + right.unit : ""}` : "", { width:1500 })}</w:tr>`).join("");
+    const rows = ["blood", "coag", "other"].map((group) => {
+      const groupLabs = labs.filter((item) => (item.group || "blood") === group);
+      if (!groupLabs.length) return "";
+      const title = { blood:"KAN / BİYOKİMYA", coag:"KOAGÜLASYON", other:"DİĞER KAN TETKİKLERİ" }[group];
+      const heading = `<w:tr>${wordTableCell(title, { width:4400, span:4, bold:true, shade:"F1F5F9" })}</w:tr>`;
+      const pairs = [];
+      for (let index = 0; index < groupLabs.length; index += 2) pairs.push([groupLabs[index], groupLabs[index + 1]]);
+      return heading + pairs.map(([left, right]) => `<w:tr>${wordTableCell(left?.label, { width:700, bold:true })}${wordTableCell(left ? `${left.value}${left.unit ? " " + left.unit : ""}` : "", { width:1500 })}${wordTableCell(right?.label, { width:700, bold:true })}${wordTableCell(right ? `${right.value}${right.unit ? " " + right.unit : ""}` : "", { width:1500 })}</w:tr>`).join("");
+    }).join("");
     return `<w:tbl><w:tblPr><w:tblW w:w="4400" w:type="dxa"/><w:tblLayout w:type="fixed"/>${borders}</w:tblPr><w:tblGrid><w:gridCol w:w="700"/><w:gridCol w:w="1500"/><w:gridCol w:w="700"/><w:gridCol w:w="1500"/></w:tblGrid>${header}${rows}</w:tbl>`;
   }
 
@@ -876,7 +917,7 @@
       wordParagraph(record.request || "—", { size:9 }),
       wordParagraph("GENEL CERRAHİ CEVABI", { size:9, bold:true, keep:true, before:40 }),
       wordParagraph(record.answer || "—", { size:9 }),
-      wordParagraph("SON GÜNCEL KANLAR" + (record.labDate ? " · " + record.labDate : ""), { size:9, bold:true, keep:true, before:45 }),
+      wordParagraph("SON GÜNCEL LABORATUVAR" + (record.labDate ? " · " + record.labDate : ""), { size:9, bold:true, keep:true, before:45 }),
       wordLabTable(record),
       wordParagraph("GÖRÜNTÜLEMELER", { size:9, bold:true, keep:true, before:45 }),
       ...((record.imaging || []).length ? record.imaging.map((item) => wordParagraph(`${item.date || ""} ${item.exam || "Görüntüleme"}${item.report ? "\n" + item.report : ""}`, { size:8 })) : [wordParagraph(record.detailErrors?.includes("Görüntüleme") ? "Görüntüleme bilgileri alınamadı." : "Görüntüleme bulunamadı.", { size:8 })]),
